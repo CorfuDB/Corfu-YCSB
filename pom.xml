@@ -105,6 +105,7 @@ LICENSE file.
     <module>aerospike</module>
     <module>cassandra</module>
     <module>cassandra2</module>
+    <module>corfu</module>
     <module>couchbase</module>
     <module>distribution</module>
     <module>dynamodb</module>
