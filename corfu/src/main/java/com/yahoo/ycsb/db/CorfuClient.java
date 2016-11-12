@@ -40,7 +40,8 @@ public class CorfuClient extends DB {
   public void init() throws DBException {
     super.init();
     Logger root = (Logger) LoggerFactory.getLogger(Logger.ROOT_LOGGER_NAME);
-    root.setLevel(Level.TRACE);
+//  root.setLevel(Level.TRACE);
+    root.setLevel(Level.OFF);
     runtime = new CorfuRuntime()
 //              .parseConfigurationString("wilbur92.corp.gq1.yahoo.com:9000")
       .parseConfigurationString("localhost:9000")
