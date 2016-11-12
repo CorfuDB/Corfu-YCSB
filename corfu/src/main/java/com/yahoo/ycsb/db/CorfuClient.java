@@ -1,19 +1,34 @@
 package com.yahoo.ycsb.db;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
 import com.yahoo.ycsb.*;
+
+import org.corfudb.protocols.wireprotocol.LogData;
 import org.corfudb.runtime.CorfuRuntime;
 import org.corfudb.runtime.collections.SMRMap;
+import org.corfudb.runtime.view.StreamView;
 
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Set;
 import java.util.Vector;
+import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.regex.Pattern;
+import java.util.stream.Collectors;
+
+//import org.corfudb.protocols.wireprotocol.ILogUnitEntry;
+import org.slf4j.LoggerFactory;
+
 
 /**
  * Created by mwei on 1/25/16.
  */
 public class CorfuClient extends DB {
+
+  private final int numOfStreams = 100_000;
 
   private CorfuRuntime runtime;
   private ConcurrentHashMap<String, Map<String, HashMap<String, byte[]>>> objectCache;
@@ -24,9 +39,14 @@ public class CorfuClient extends DB {
   @Override
   public void init() throws DBException {
     super.init();
+    Logger root = (Logger) LoggerFactory.getLogger(Logger.ROOT_LOGGER_NAME);
+    root.setLevel(Level.TRACE);
     runtime = new CorfuRuntime()
-              .parseConfigurationString("localhost:9000")
-              .connect();
+//              .parseConfigurationString("wilbur92.corp.gq1.yahoo.com:9000")
+      .parseConfigurationString("localhost:9000")
+      .connect();
+    runtime.setCacheDisabled(true);
+
     objectCache = new ConcurrentHashMap<>();
   }
 
@@ -40,6 +60,30 @@ public class CorfuClient extends DB {
     return out;
   }
 
+  private UUID getUUIDfromString(String id) {
+    if (id == null) {
+      return null;
+    }
+    try {
+      return UUID.fromString(id);
+    } catch (IllegalArgumentException iae) {
+      UUID o = UUID.nameUUIDFromBytes(id.getBytes());
+      return o;
+    }
+  }
+
+  private Set<UUID> streamsFromString(String streamString)  {
+    if (streamString == null) {
+      return Collections.emptySet();
+    }
+
+    return Pattern.compile(",")
+      .splitAsStream(streamString)
+      .map(String::trim)
+      .map(this::getUUIDfromString)
+      .collect(Collectors.toSet());
+  }
+
   /**
    * Read a record from the database. Each field/value pair from the result will be stored in a HashMap.
    *
@@ -51,12 +95,37 @@ public class CorfuClient extends DB {
    */
   @Override
   public Status read(String table, String key, Set<String> fields, HashMap<String, ByteIterator> result) {
-    Map<String, byte[]> records = getTable(table).get(key);
-    for (String s : fields) {
-      result.put(s, new ByteArrayByteIterator(records.get(s)));
+//    Map<String, byte[]> records = getTable(table).get(key);
+//    for (String s : fields) {
+//      result.put(s, new ByteArrayByteIterator(records.get(s)));
+//    }
+
+    long intKey = Long.parseLong(key.replaceFirst("user", "")) % numOfStreams;
+    StreamView s = runtime.getStreamsView().get(getUUIDfromString(Long.toString(intKey)));
+    for (int i=0; true; ++i) {
+      LogData r = s.read();
+      if (r == null) {
+        System.out.println(i);
+        System.out.flush();
+        return Status.OK;
+      }
+//      else {
+//        ByteBuf buf = new ByteBuf();
+//        r.getBuffer().getBytes(0, buf, r.getBuffer().readableBytes());
+//        System.out.println("Reading: " + (new String(r.getBuffer().array())));
+//        System.out.flush();
+//        if (r.getBuffer().hasArray()) {
+//          System.out.println("Array exists");
+//          System.out.flush();
+//          result.put(Integer.toString(i), new ByteArrayByteIterator(r.getBuffer().array()));
+//        }
+//      }
     }
-    return Status.OK;
   }
+
+
+
+
 
   /**
    * Perform a range scan for a set of records in the database. Each field/value pair from the result will be
@@ -87,14 +156,13 @@ public class CorfuClient extends DB {
    */
   @Override
   public Status update(String table, String key, HashMap<String, ByteIterator> values) {
-    HashMap<String, byte[]> records = getTable(table).get(key);
-    HashMap<String, byte[]> toInsert = new HashMap<>();
-    for (String s : values.keySet()) {
-      toInsert.put(key, values.get(s).toArray());
-    }
-    records.putAll(toInsert);
-    // Forcefully update the map, since values is not an SMR object.
-    getTable(table).put(key, records);
+    Map.Entry<String, ByteIterator> entry=values.entrySet().iterator().next();
+    ByteIterator value=entry.getValue();
+
+    long intKey = Long.parseLong(key.replaceFirst("user", "")) % numOfStreams;
+    runtime.getStreamsView().write(streamsFromString(Long.toString(intKey)),
+        (value.toArray()));
+
     return Status.OK;
   }
 
@@ -108,13 +176,19 @@ public class CorfuClient extends DB {
    * @param values A HashMap of field/value pairs to insert in the record
    * @return The result of the operation.
    */
+
   @Override
   public Status insert(String table, String key, HashMap<String, ByteIterator> values) {
-    HashMap<String, byte[]> toInsert = new HashMap<>();
-    for (String s : values.keySet()) {
-      toInsert.put(key, values.get(s).toArray());
-    }
-    getTable(table).put(key, toInsert);
+    Map.Entry<String, ByteIterator> entry=values.entrySet().iterator().next();
+    ByteIterator value=entry.getValue();
+
+    long intKey = Long.parseLong(key.replaceFirst("user", "")) % numOfStreams;
+    byte[] val = value.toArray();
+    runtime.getStreamsView().write(streamsFromString(Long.toString(intKey)),
+        (val));
+
+//    System.out.println("Size of value: " + val.length);
+//    System.out.flush();
     return Status.OK;
   }
 
@@ -127,7 +201,6 @@ public class CorfuClient extends DB {
    */
   @Override
   public Status delete(String table, String key) {
-    getTable(table).remove(key);
     return Status.OK;
   }
 }
