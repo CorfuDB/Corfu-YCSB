@@ -106,8 +106,8 @@ public class CorfuClient extends DB {
     for (int i=0; true; ++i) {
       LogData r = s.read();
       if (r == null) {
-        System.out.println(i);
-        System.out.flush();
+//        System.out.println(i);
+//        System.out.flush();
         return Status.OK;
       }
 //      else {
