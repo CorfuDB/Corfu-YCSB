@@ -15,7 +15,6 @@ import java.util.Set;
  * Created by rmichoud on 12/1/16.
  */
 public final class CorfuUtils {
-  private CorfuRuntime runtime;
 
   /**
    *  private so it cannot be instantiate.
