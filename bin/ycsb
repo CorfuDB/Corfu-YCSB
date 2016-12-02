@@ -58,6 +58,7 @@ DATABASES = {
     "basic"        : "com.yahoo.ycsb.BasicDB",
     "cassandra-cql": "com.yahoo.ycsb.db.CassandraCQLClient",
     "cassandra2-cql": "com.yahoo.ycsb.db.CassandraCQLClient",
+    "corfu-streams" : "com.yahoo.ycsb.db.CorfuClientStreams",
     "corfu"        : "com.yahoo.ycsb.db.CorfuClient",
     "couchbase"    : "com.yahoo.ycsb.db.CouchbaseClient",
     "couchbase2"   : "com.yahoo.ycsb.db.couchbase2.Couchbase2Client",
