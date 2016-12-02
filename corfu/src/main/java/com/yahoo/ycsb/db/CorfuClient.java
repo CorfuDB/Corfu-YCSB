@@ -2,9 +2,11 @@ package com.yahoo.ycsb.db;
 
 import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.Logger;
-import com.yahoo.ycsb.*;
+import com.yahoo.ycsb.ByteIterator;
+import com.yahoo.ycsb.DB;
+import com.yahoo.ycsb.DBException;
+import com.yahoo.ycsb.Status;
 import org.corfudb.runtime.CorfuRuntime;
-
 import org.slf4j.LoggerFactory;
 
 import java.util.HashMap;
@@ -27,6 +29,7 @@ import java.util.Vector;
  */
 public class CorfuClient extends DB {
   private CorfuRuntime runtime;
+  private Map<String, Map<String, String>> localCache;
 
   /**
    * Initialize any state for this DB.
@@ -43,7 +46,7 @@ public class CorfuClient extends DB {
         .connect();
 
     /* Create default: usertable table */
-    CorfuUtils.<String, Map<String, String>>createSMRMap("usertable", runtime);
+    localCache = CorfuUtils.<String, Map<String, String>>createSMRMap("usertable", runtime);
   }
 
   /**
@@ -60,10 +63,8 @@ public class CorfuClient extends DB {
   @Override
   public Status read(String table, String key, Set<String> fields,
                      HashMap<String, ByteIterator> result) {
-
     /* Get a map backed by a stream that represent a table */
-    Map<String, Map<String, String>> mapTable = CorfuUtils.createSMRMap(table, runtime);
-    Map<String, String> record = mapTable.get(key);
+    Map<String, String> record = localCache.get(key);
 
     return CorfuUtils.readRecordFromStringMap(record, result, fields);
 
@@ -101,9 +102,7 @@ public class CorfuClient extends DB {
    */
   @Override
   public Status update(String table, String key, HashMap<String, ByteIterator> values) {
-
-    Map<String, Map<String, String>> mapTable = CorfuUtils.createSMRMap(table, runtime);
-    Map<String, String> record = mapTable.get(key);
+    Map<String, String> record = localCache.get(key);
 
     return CorfuUtils.updateRecordInStringMap(record, values, runtime);
 
@@ -121,12 +120,11 @@ public class CorfuClient extends DB {
    */
   @Override
   public Status insert(String table, String key, HashMap<String, ByteIterator> values) {
-    Map<String, Map<String, String>> mapTable = CorfuUtils.createSMRMap(table, runtime);
     Map<String, String> record = new HashMap<String, String>();
 
     Status st = CorfuUtils.populateRecordAsStringMap(record, values, runtime);
 
-    mapTable.put(key, record);
+    localCache.put(key, record);
 
     return st;
   }
@@ -139,7 +137,7 @@ public class CorfuClient extends DB {
    * @return The result of the operation.
    */
   @Override
-  public Status delete(String s, String s1) {
+  public Status delete(String table, String key) {
     return null;
   }
 }

@@ -54,6 +54,9 @@ public final class CorfuUtils {
   public static Status readRecordFromStringMap(Map<String, String> record,
                                                HashMap<String, ByteIterator> result,
                                                Set<String> fields) {
+    if (record == null) {
+      return Status.NOT_FOUND;
+    }
     if (fields != null) {
       for (String field: fields) {
         String val = record.get(field);
@@ -86,6 +89,9 @@ public final class CorfuUtils {
   public static Status updateRecordInStringMap(Map<String, String> record,
                                                HashMap<String, ByteIterator> values,
                                                CorfuRuntime runtime) {
+    if (record == null) {
+      return Status.NOT_FOUND;
+    }
     /* We use a Transaction because we want to update the map on batch mode */
     try {
       runtime.getObjectsView().TXBegin();

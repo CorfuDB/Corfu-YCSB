@@ -1,10 +1,10 @@
 package com.yahoo.ycsb.db;
 
+import com.yahoo.ycsb.*;
+
 
 import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.Logger;
-import com.yahoo.ycsb.*;
-
 import org.corfudb.runtime.CorfuRuntime;
 import org.corfudb.runtime.collections.SMRMap;
 import org.corfudb.runtime.exceptions.TransactionAbortedException;
