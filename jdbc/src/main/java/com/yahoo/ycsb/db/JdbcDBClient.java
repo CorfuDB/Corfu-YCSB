@@ -1,18 +1,18 @@
 /**
- * Copyright (c) 2010 - 2016 Yahoo! Inc. All rights reserved.
- * 
- * Licensed under the Apache License, Version 2.0 (the "License"); you 
+ * Copyright (c) 2010 - 2016 Yahoo! Inc., 2016 YCSB contributors. All rights reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License"); you
  * may not use this file except in compliance with the License. You
- * may obtain a copy of the License at 
- * 
+ * may obtain a copy of the License at
+ *
  * http://www.apache.org/licenses/LICENSE-2.0
- * 
- * Unless required by applicable law or agreed to in writing, software 
- * distributed under the License is distributed on an "AS IS" BASIS, 
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or 
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or
  * implied. See the License for the specific language governing
- * permissions and limitations under the License. See accompanying 
- * LICENSE file. 
+ * permissions and limitations under the License. See accompanying
+ * LICENSE file.
  */
 package com.yahoo.ycsb.db;
 
@@ -26,16 +26,17 @@ import java.sql.*;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
+import com.yahoo.ycsb.db.flavors.DBFlavor;
 
 /**
  * A class that wraps a JDBC compliant database to allow it to be interfaced
  * with YCSB. This class extends {@link DB} and implements the database
  * interface used by YCSB client.
- * 
+ *
  * <br>
  * Each client will have its own instance of this class. This client is not
  * thread safe.
- * 
+ *
  * <br>
  * This interface expects a schema <key> <field1> <field2> <field3> ... All
  * attributes are of type VARCHAR. All accesses are through the primary key.
@@ -55,11 +56,16 @@ public class JdbcDBClient extends DB {
   /** The password to use for establishing the connection. */
   public static final String CONNECTION_PASSWD = "db.passwd";
 
+  /** The batch size for batched inserts. Set to >0 to use batching */
+  public static final String DB_BATCH_SIZE = "db.batchsize";
+
   /** The JDBC fetch size hinted to the driver. */
   public static final String JDBC_FETCH_SIZE = "jdbc.fetchsize";
 
   /** The JDBC connection auto-commit property for the driver. */
   public static final String JDBC_AUTO_COMMIT = "jdbc.autocommit";
+
+  public static final String JDBC_BATCH_UPDATES = "jdbc.batchupdateapi";
 
   /** The name of the property for the number of fields in a record. */
   public static final String FIELD_COUNT_PROPERTY = "fieldcount";
@@ -79,83 +85,35 @@ public class JdbcDBClient extends DB {
   private ArrayList<Connection> conns;
   private boolean initialized = false;
   private Properties props;
-  private Integer jdbcFetchSize;
+  private int jdbcFetchSize;
+  private int batchSize;
+  private boolean autoCommit;
+  private boolean batchUpdates;
   private static final String DEFAULT_PROP = "";
   private ConcurrentMap<StatementType, PreparedStatement> cachedStatements;
+  private long numRowsInBatch = 0;
+  /** DB flavor defines DB-specific syntax and behavior for the
+   * particular database. Current database flavors are: {default, phoenix} */
+  private DBFlavor dbFlavor;
 
   /**
-   * The statement type for the prepared statements.
+   * Ordered field information for insert and update statements.
    */
-  private static class StatementType {
+  private static class OrderedFieldInfo {
+    private String fieldKeys;
+    private List<String> fieldValues;
 
-    enum Type {
-      INSERT(1), DELETE(2), READ(3), UPDATE(4), SCAN(5);
-
-      private final int internalType;
-
-      private Type(int type) {
-        internalType = type;
-      }
-
-      int getHashCode() {
-        final int prime = 31;
-        int result = 1;
-        result = prime * result + internalType;
-        return result;
-      }
+    OrderedFieldInfo(String fieldKeys, List<String> fieldValues) {
+      this.fieldKeys = fieldKeys;
+      this.fieldValues = fieldValues;
     }
 
-    private Type type;
-    private int shardIndex;
-    private int numFields;
-    private String tableName;
-
-    StatementType(Type type, String tableName, int numFields, int shardIndex) {
-      this.type = type;
-      this.tableName = tableName;
-      this.numFields = numFields;
-      this.shardIndex = shardIndex;
+    String getFieldKeys() {
+      return fieldKeys;
     }
 
-    @Override
-    public int hashCode() {
-      final int prime = 31;
-      int result = 1;
-      result = prime * result + numFields + 100 * shardIndex;
-      result = prime * result + ((tableName == null) ? 0 : tableName.hashCode());
-      result = prime * result + ((type == null) ? 0 : type.getHashCode());
-      return result;
-    }
-
-    @Override
-    public boolean equals(Object obj) {
-      if (this == obj) {
-        return true;
-      }
-      if (obj == null) {
-        return false;
-      }
-      if (getClass() != obj.getClass()) {
-        return false;
-      }
-      StatementType other = (StatementType) obj;
-      if (numFields != other.numFields) {
-        return false;
-      }
-      if (shardIndex != other.shardIndex) {
-        return false;
-      }
-      if (tableName == null) {
-        if (other.tableName != null) {
-          return false;
-        }
-      } else if (!tableName.equals(other.tableName)) {
-        return false;
-      }
-      if (type != other.type) {
-        return false;
-      }
-      return true;
+    List<String> getFieldValues() {
+      return fieldValues;
     }
   }
 
@@ -183,8 +141,34 @@ public class JdbcDBClient extends DB {
 
   private void cleanupAllConnections() throws SQLException {
     for (Connection conn : conns) {
+      if (!autoCommit) {
+        conn.commit();
+      }
       conn.close();
     }
+  }
+
+  /** Returns parsed int value from the properties if set, otherwise returns -1. */
+  private static int getIntProperty(Properties props, String key) throws DBException {
+    String valueStr = props.getProperty(key);
+    if (valueStr != null) {
+      try {
+        return Integer.parseInt(valueStr);
+      } catch (NumberFormatException nfe) {
+        System.err.println("Invalid " + key + " specified: " + valueStr);
+        throw new DBException(nfe);
+      }
+    }
+    return -1;
+  }
+
+  /** Returns parsed boolean value from the properties if set, otherwise returns defaultVal. */
+  private static boolean getBoolProperty(Properties props, String key, boolean defaultVal) {
+    String valueStr = props.getProperty(key);
+    if (valueStr != null) {
+      return Boolean.parseBoolean(valueStr);
+    }
+    return defaultVal;
   }
 
   @Override
@@ -199,18 +183,11 @@ public class JdbcDBClient extends DB {
     String passwd = props.getProperty(CONNECTION_PASSWD, DEFAULT_PROP);
     String driver = props.getProperty(DRIVER_CLASS);
 
-    String jdbcFetchSizeStr = props.getProperty(JDBC_FETCH_SIZE);
-    if (jdbcFetchSizeStr != null) {
-      try {
-        this.jdbcFetchSize = Integer.parseInt(jdbcFetchSizeStr);
-      } catch (NumberFormatException nfe) {
-        System.err.println("Invalid JDBC fetch size specified: " + jdbcFetchSizeStr);
-        throw new DBException(nfe);
-      }
-    }
+    this.jdbcFetchSize = getIntProperty(props, JDBC_FETCH_SIZE);
+    this.batchSize = getIntProperty(props, DB_BATCH_SIZE);
 
-    String autoCommitStr = props.getProperty(JDBC_AUTO_COMMIT, Boolean.TRUE.toString());
-    Boolean autoCommit = Boolean.parseBoolean(autoCommitStr);
+    this.autoCommit = getBoolProperty(props, JDBC_AUTO_COMMIT, true);
+    this.batchUpdates = getBoolProperty(props, JDBC_BATCH_UPDATES, false);
 
     try {
       if (driver != null) {
@@ -218,7 +195,8 @@ public class JdbcDBClient extends DB {
       }
       int shardCount = 0;
       conns = new ArrayList<Connection>(3);
-      for (String url : urls.split(",")) {
+      final String[] urlArr = urls.split(",");
+      for (String url : urlArr) {
         System.out.println("Adding shard node URL: " + url);
         Connection conn = DriverManager.getConnection(url, user, passwd);
 
@@ -232,9 +210,11 @@ public class JdbcDBClient extends DB {
         conns.add(conn);
       }
 
-      System.out.println("Using " + shardCount + " shards");
+      System.out.println("Using shards: " + shardCount + ", batchSize:" + batchSize + ", fetchSize: " + jdbcFetchSize);
 
       cachedStatements = new ConcurrentHashMap<StatementType, PreparedStatement>();
+
+      this.dbFlavor = DBFlavor.fromJdbcUrl(urlArr[0]);
     } catch (ClassNotFoundException e) {
       System.err.println("Error in initializing the JDBS driver: " + e);
       throw new DBException(e);
@@ -245,11 +225,26 @@ public class JdbcDBClient extends DB {
       System.err.println("Invalid value for fieldcount property. " + e);
       throw new DBException(e);
     }
+
     initialized = true;
   }
 
   @Override
   public void cleanup() throws DBException {
+    if (batchSize > 0) {
+      try {
+        // commit un-finished batches
+        for (PreparedStatement st : cachedStatements.values()) {
+          if (!st.getConnection().isClosed() && !st.isClosed() && (numRowsInBatch % batchSize != 0)) {
+            st.executeBatch();
+          }
+        }
+      } catch (SQLException e) {
+        System.err.println("Error in cleanup execution. " + e);
+        throw new DBException(e);
+      }
+    }
+
     try {
       cleanupAllConnections();
     } catch (SQLException e) {
@@ -258,15 +253,10 @@ public class JdbcDBClient extends DB {
     }
   }
 
-  private PreparedStatement createAndCacheInsertStatement(StatementType insertType, String key) throws SQLException {
-    StringBuilder insert = new StringBuilder("INSERT INTO ");
-    insert.append(insertType.tableName);
-    insert.append(" VALUES(?");
-    for (int i = 0; i < insertType.numFields; i++) {
-      insert.append(",?");
-    }
-    insert.append(")");
-    PreparedStatement insertStatement = getShardConnectionByKey(key).prepareStatement(insert.toString());
+  private PreparedStatement createAndCacheInsertStatement(StatementType insertType, String key)
+      throws SQLException {
+    String insert = dbFlavor.createInsertStatement(insertType, key);
+    PreparedStatement insertStatement = getShardConnectionByKey(key).prepareStatement(insert);
     PreparedStatement stmt = cachedStatements.putIfAbsent(insertType, insertStatement);
     if (stmt == null) {
       return insertStatement;
@@ -274,14 +264,10 @@ public class JdbcDBClient extends DB {
     return stmt;
   }
 
-  private PreparedStatement createAndCacheReadStatement(StatementType readType, String key) throws SQLException {
-    StringBuilder read = new StringBuilder("SELECT * FROM ");
-    read.append(readType.tableName);
-    read.append(" WHERE ");
-    read.append(PRIMARY_KEY);
-    read.append(" = ");
-    read.append("?");
-    PreparedStatement readStatement = getShardConnectionByKey(key).prepareStatement(read.toString());
+  private PreparedStatement createAndCacheReadStatement(StatementType readType, String key)
+      throws SQLException {
+    String read = dbFlavor.createReadStatement(readType, key);
+    PreparedStatement readStatement = getShardConnectionByKey(key).prepareStatement(read);
     PreparedStatement stmt = cachedStatements.putIfAbsent(readType, readStatement);
     if (stmt == null) {
       return readStatement;
@@ -289,13 +275,10 @@ public class JdbcDBClient extends DB {
     return stmt;
   }
 
-  private PreparedStatement createAndCacheDeleteStatement(StatementType deleteType, String key) throws SQLException {
-    StringBuilder delete = new StringBuilder("DELETE FROM ");
-    delete.append(deleteType.tableName);
-    delete.append(" WHERE ");
-    delete.append(PRIMARY_KEY);
-    delete.append(" = ?");
-    PreparedStatement deleteStatement = getShardConnectionByKey(key).prepareStatement(delete.toString());
+  private PreparedStatement createAndCacheDeleteStatement(StatementType deleteType, String key)
+      throws SQLException {
+    String delete = dbFlavor.createDeleteStatement(deleteType, key);
+    PreparedStatement deleteStatement = getShardConnectionByKey(key).prepareStatement(delete);
     PreparedStatement stmt = cachedStatements.putIfAbsent(deleteType, deleteStatement);
     if (stmt == null) {
       return deleteStatement;
@@ -303,22 +286,10 @@ public class JdbcDBClient extends DB {
     return stmt;
   }
 
-  private PreparedStatement createAndCacheUpdateStatement(StatementType updateType, String key) throws SQLException {
-    StringBuilder update = new StringBuilder("UPDATE ");
-    update.append(updateType.tableName);
-    update.append(" SET ");
-    for (int i = 0; i < updateType.numFields; i++) {
-      update.append(COLUMN_PREFIX);
-      update.append(i);
-      update.append("=?");
-      if (i < updateType.numFields - 1) {
-        update.append(", ");
-      }
-    }
-    update.append(" WHERE ");
-    update.append(PRIMARY_KEY);
-    update.append(" = ?");
-    PreparedStatement insertStatement = getShardConnectionByKey(key).prepareStatement(update.toString());
+  private PreparedStatement createAndCacheUpdateStatement(StatementType updateType, String key)
+      throws SQLException {
+    String update = dbFlavor.createUpdateStatement(updateType, key);
+    PreparedStatement insertStatement = getShardConnectionByKey(key).prepareStatement(update);
     PreparedStatement stmt = cachedStatements.putIfAbsent(updateType, insertStatement);
     if (stmt == null) {
       return insertStatement;
@@ -326,17 +297,11 @@ public class JdbcDBClient extends DB {
     return stmt;
   }
 
-  private PreparedStatement createAndCacheScanStatement(StatementType scanType, String key) throws SQLException {
-    StringBuilder select = new StringBuilder("SELECT * FROM ");
-    select.append(scanType.tableName);
-    select.append(" WHERE ");
-    select.append(PRIMARY_KEY);
-    select.append(" >= ?");
-    select.append(" ORDER BY ");
-    select.append(PRIMARY_KEY);
-    select.append(" LIMIT ?");
-    PreparedStatement scanStatement = getShardConnectionByKey(key).prepareStatement(select.toString());
-    if (this.jdbcFetchSize != null) {
+  private PreparedStatement createAndCacheScanStatement(StatementType scanType, String key)
+      throws SQLException {
+    String select = dbFlavor.createScanStatement(scanType, key);
+    PreparedStatement scanStatement = getShardConnectionByKey(key).prepareStatement(select);
+    if (this.jdbcFetchSize > 0) {
       scanStatement.setFetchSize(this.jdbcFetchSize);
     }
     PreparedStatement stmt = cachedStatements.putIfAbsent(scanType, scanStatement);
@@ -349,7 +314,7 @@ public class JdbcDBClient extends DB {
   @Override
   public Status read(String tableName, String key, Set<String> fields, HashMap<String, ByteIterator> result) {
     try {
-      StatementType type = new StatementType(StatementType.Type.READ, tableName, 1, getShardIndexByKey(key));
+      StatementType type = new StatementType(StatementType.Type.READ, tableName, 1, "", getShardIndexByKey(key));
       PreparedStatement readStatement = cachedStatements.get(type);
       if (readStatement == null) {
         readStatement = createAndCacheReadStatement(type, key);
@@ -378,7 +343,7 @@ public class JdbcDBClient extends DB {
   public Status scan(String tableName, String startKey, int recordcount, Set<String> fields,
                      Vector<HashMap<String, ByteIterator>> result) {
     try {
-      StatementType type = new StatementType(StatementType.Type.SCAN, tableName, 1, getShardIndexByKey(startKey));
+      StatementType type = new StatementType(StatementType.Type.SCAN, tableName, 1, "", getShardIndexByKey(startKey));
       PreparedStatement scanStatement = cachedStatements.get(type);
       if (scanStatement == null) {
         scanStatement = createAndCacheScanStatement(type, startKey);
@@ -408,14 +373,16 @@ public class JdbcDBClient extends DB {
   public Status update(String tableName, String key, HashMap<String, ByteIterator> values) {
     try {
       int numFields = values.size();
-      StatementType type = new StatementType(StatementType.Type.UPDATE, tableName, numFields, getShardIndexByKey(key));
+      OrderedFieldInfo fieldInfo = getFieldInfo(values);
+      StatementType type = new StatementType(StatementType.Type.UPDATE, tableName,
+          numFields, fieldInfo.getFieldKeys(), getShardIndexByKey(key));
       PreparedStatement updateStatement = cachedStatements.get(type);
       if (updateStatement == null) {
         updateStatement = createAndCacheUpdateStatement(type, key);
       }
       int index = 1;
-      for (Map.Entry<String, ByteIterator> entry : values.entrySet()) {
-        updateStatement.setString(index++, entry.getValue().toString());
+      for (String value: fieldInfo.getFieldValues()) {
+        updateStatement.setString(index++, value);
       }
       updateStatement.setString(index, key);
       int result = updateStatement.executeUpdate();
@@ -433,20 +400,61 @@ public class JdbcDBClient extends DB {
   public Status insert(String tableName, String key, HashMap<String, ByteIterator> values) {
     try {
       int numFields = values.size();
-      StatementType type = new StatementType(StatementType.Type.INSERT, tableName, numFields, getShardIndexByKey(key));
+      OrderedFieldInfo fieldInfo = getFieldInfo(values);
+      StatementType type = new StatementType(StatementType.Type.INSERT, tableName,
+          numFields, fieldInfo.getFieldKeys(), getShardIndexByKey(key));
       PreparedStatement insertStatement = cachedStatements.get(type);
       if (insertStatement == null) {
         insertStatement = createAndCacheInsertStatement(type, key);
       }
       insertStatement.setString(1, key);
       int index = 2;
-      for (Map.Entry<String, ByteIterator> entry : values.entrySet()) {
-        String field = entry.getValue().toString();
-        insertStatement.setString(index++, field);
+      for (String value: fieldInfo.getFieldValues()) {
+        insertStatement.setString(index++, value);
       }
-      int result = insertStatement.executeUpdate();
-      if (result == 1) {
-        return Status.OK;
+      // Using the batch insert API
+      if (batchUpdates) {
+        insertStatement.addBatch();
+        // Check for a sane batch size
+        if (batchSize > 0) {
+          // Commit the batch after it grows beyond the configured size
+          if (++numRowsInBatch % batchSize == 0) {
+            int[] results = insertStatement.executeBatch();
+            for (int r : results) {
+              if (r != 1) {
+                return Status.ERROR;
+              }
+            }
+            // If autoCommit is off, make sure we commit the batch
+            if (!autoCommit) {
+              getShardConnectionByKey(key).commit();
+            }
+            return Status.OK;
+          } // else, the default value of -1 or a nonsense. Treat it as an infinitely large batch.
+        } // else, we let the batch accumulate
+        // Added element to the batch, potentially committing the batch too.
+        return Status.BATCHED_OK;
+      } else {
+        // Normal update
+        int result = insertStatement.executeUpdate();
+        // If we are not autoCommit, we might have to commit now
+        if (!autoCommit) {
+          // Let updates be batcher locally
+          if (batchSize > 0) {
+            if (++numRowsInBatch % batchSize == 0) {
+              // Send the batch of updates
+              getShardConnectionByKey(key).commit();
+            }
+            // uhh
+            return Status.OK;
+          } else {
+            // Commit each update
+            getShardConnectionByKey(key).commit();
+          }
+        }
+        if (result == 1) {
+          return Status.OK;
+        }
       }
       return Status.UNEXPECTED_STATE;
     } catch (SQLException e) {
@@ -458,7 +466,7 @@ public class JdbcDBClient extends DB {
   @Override
   public Status delete(String tableName, String key) {
     try {
-      StatementType type = new StatementType(StatementType.Type.DELETE, tableName, 1, getShardIndexByKey(key));
+      StatementType type = new StatementType(StatementType.Type.DELETE, tableName, 1, "", getShardIndexByKey(key));
       PreparedStatement deleteStatement = cachedStatements.get(type);
       if (deleteStatement == null) {
         deleteStatement = createAndCacheDeleteStatement(type, key);
@@ -473,5 +481,21 @@ public class JdbcDBClient extends DB {
       System.err.println("Error in processing delete to table: " + tableName + e);
       return Status.ERROR;
     }
+  }
+
+  private OrderedFieldInfo getFieldInfo(HashMap<String, ByteIterator> values) {
+    String fieldKeys = "";
+    List<String> fieldValues = new ArrayList<>();
+    int count = 0;
+    for (Map.Entry<String, ByteIterator> entry : values.entrySet()) {
+      fieldKeys += entry.getKey();
+      if (count < values.size() - 1) {
+        fieldKeys += ",";
+      }
+      fieldValues.add(count, entry.getValue().toString());
+      count++;
+    }
+
+    return new OrderedFieldInfo(fieldKeys, fieldValues);
   }
 }

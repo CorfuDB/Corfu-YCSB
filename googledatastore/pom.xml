@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- 
-Copyright (c) 2015 YCSB contributors. All rights reserved.
+Copyright (c) 2015-2016 YCSB contributors. All rights reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License"); you
 may not use this file except in compliance with the License. You
@@ -21,18 +21,19 @@ LICENSE file.
   <parent>
     <groupId>com.yahoo.ycsb</groupId>
     <artifactId>binding-parent</artifactId>
-    <version>0.7.0-SNAPSHOT</version>
+    <version>0.13.0-SNAPSHOT</version>
     <relativePath>../binding-parent</relativePath>
   </parent>
 
   <artifactId>googledatastore-binding</artifactId>
   <name>Google Cloud Datastore Binding</name>
   <url>https://github.com/GoogleCloudPlatform/google-cloud-datastore</url>
+
   <dependencies>
     <dependency>
-      <groupId>com.google.apis</groupId>
-      <artifactId>google-api-services-datastore-protobuf</artifactId>
-      <version>v1beta2-rev1-3.0.2</version>
+      <groupId>com.google.cloud.datastore</groupId>
+      <artifactId>datastore-v1-proto-client</artifactId>
+      <version>1.1.0</version>
     </dependency>
     <dependency>
       <groupId>log4j</groupId>
@@ -46,28 +47,4 @@ LICENSE file.
       <scope>provided</scope>
     </dependency>
   </dependencies>
-  <build>
-    <plugins>
-      <plugin>
-        <groupId>org.apache.maven.plugins</groupId>
-        <artifactId>maven-checkstyle-plugin</artifactId>
-        <version>2.15</version>
-        <configuration>
-          <consoleOutput>true</consoleOutput>
-          <configLocation>../checkstyle.xml</configLocation>
-          <failOnViolation>true</failOnViolation>
-          <failsOnError>false</failsOnError>
-        </configuration>
-        <executions>
-          <execution>
-            <id>validate</id>
-            <phase>validate</phase>
-            <goals>
-              <goal>checkstyle</goal>
-            </goals>
-          </execution>
-        </executions>
-      </plugin>
-    </plugins>
-  </build>
 </project>

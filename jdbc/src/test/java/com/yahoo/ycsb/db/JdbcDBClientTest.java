@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2015 Yahoo! Inc. All rights reserved.
+ * Copyright (c) 2015 - 2016 Yahoo! Inc., 2016 YCSB contributors. All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you
  * may not use this file except in compliance with the License. You
@@ -30,9 +30,6 @@ import java.util.HashSet;
 import java.util.Properties;
 import java.util.Vector;
 
-/**
- * Created by kruthar on 11/2/15.
- */
 public class JdbcDBClientTest {
     private static final String TEST_DB_DRIVER = "org.hsqldb.jdbc.JDBCDriver";
     private static final String TEST_DB_URL = "jdbc:hsqldb:mem:ycsb";
@@ -49,24 +46,31 @@ public class JdbcDBClientTest {
 
     @BeforeClass
     public static void setup() {
-        try {
-            jdbcConnection = DriverManager.getConnection(TEST_DB_URL);
-            jdbcDBClient = new JdbcDBClient();
+      setupWithBatch(1, true);
+    }
 
-            Properties p = new Properties();
-            p.setProperty(JdbcDBClient.CONNECTION_URL, TEST_DB_URL);
-            p.setProperty(JdbcDBClient.DRIVER_CLASS, TEST_DB_DRIVER);
-            p.setProperty(JdbcDBClient.CONNECTION_USER, TEST_DB_USER);
+    public static void setupWithBatch(int batchSize, boolean autoCommit) {
+      try {
+        jdbcConnection = DriverManager.getConnection(TEST_DB_URL);
+        jdbcDBClient = new JdbcDBClient();
 
-            jdbcDBClient.setProperties(p);
-            jdbcDBClient.init();
-        } catch (SQLException e) {
-            e.printStackTrace();
-            fail("Could not create local Database");
-        } catch (DBException e) {
-            e.printStackTrace();
-            fail("Could not create JdbcDBClient instance");
-        }
+        Properties p = new Properties();
+        p.setProperty(JdbcDBClient.CONNECTION_URL, TEST_DB_URL);
+        p.setProperty(JdbcDBClient.DRIVER_CLASS, TEST_DB_DRIVER);
+        p.setProperty(JdbcDBClient.CONNECTION_USER, TEST_DB_USER);
+        p.setProperty(JdbcDBClient.DB_BATCH_SIZE, Integer.toString(batchSize));
+        p.setProperty(JdbcDBClient.JDBC_BATCH_UPDATES, "true");
+        p.setProperty(JdbcDBClient.JDBC_AUTO_COMMIT, Boolean.toString(autoCommit));
+
+        jdbcDBClient.setProperties(p);
+        jdbcDBClient.init();
+      } catch (SQLException e) {
+        e.printStackTrace();
+        fail("Could not create local Database");
+      } catch (DBException e) {
+        e.printStackTrace();
+        fail("Could not create JdbcDBClient instance");
+      }
     }
 
     @AfterClass
@@ -78,7 +82,7 @@ public class JdbcDBClientTest {
         } catch (SQLException e) {
             e.printStackTrace();
         }
-        
+
         try {
             if (jdbcDBClient != null) {
                 jdbcDBClient.cleanup();
@@ -153,7 +157,7 @@ public class JdbcDBClientTest {
     public void insertTest() {
         try {
             String insertKey = "user0";
-            insertRow(insertKey);
+            HashMap<String, ByteIterator> insertMap = insertRow(insertKey);
 
             ResultSet resultSet = jdbcConnection.prepareStatement(
                 String.format("SELECT * FROM %s", TABLE_NAME)
@@ -164,9 +168,7 @@ public class JdbcDBClientTest {
             // Check that all the columns have expected values
             assertEquals(resultSet.getString(KEY_FIELD), insertKey);
             for (int i = 0; i < 3; i++) {
-                // TODO: This will fail until the fix is made to insert and update fields in the correct order.
-                // TODO: Uncomment this assertEquals when the fix is made.
-                //assertEquals(resultSet.getString(FIELD_PREFIX + i), insertMap.get(FIELD_PREFIX + i));
+                assertEquals(resultSet.getString(FIELD_PREFIX + i), insertMap.get(FIELD_PREFIX + i).toString());
             }
             // Check that we do not have any more rows
             assertFalse(resultSet.next());
@@ -224,9 +226,7 @@ public class JdbcDBClientTest {
             resultSet.next();
             assertEquals(resultSet.getString(KEY_FIELD), "user1");
             for (int i = 0; i < 3; i++) {
-                // TODO: This will fail until the fix is made to insert and update fields in the correct order.
-                // TODO: Uncomment this assertEquals when the fix is made.
-                //assertEquals(resultSet.getString(FIELD_PREFIX + i), updateMap.get(FIELD_PREFIX + i));
+                assertEquals(resultSet.getString(FIELD_PREFIX + i), updateMap.get(FIELD_PREFIX + i).toString());
             }
 
             // Ensure that user2 record was not changed
@@ -245,7 +245,7 @@ public class JdbcDBClientTest {
     @Test
     public void readTest() {
         String insertKey = "user0";
-        insertRow(insertKey);
+        HashMap<String, ByteIterator> insertMap = insertRow(insertKey);
         HashSet<String> readFields = new HashSet<String>();
         HashMap<String, ByteIterator> readResultMap = new HashMap<String, ByteIterator>();
 
@@ -254,9 +254,7 @@ public class JdbcDBClientTest {
         jdbcDBClient.read(TABLE_NAME, insertKey, readFields, readResultMap);
         assertEquals("Assert that result has correct number of fields", readFields.size(), readResultMap.size());
         for (String field: readFields) {
-            // TODO: This will fail until the fix is made to insert and update fields in the correct order.
-            // TODO: Uncomment this assertEquals when the fix is made.
-            //assertEquals("Assert " + field + " was read correctly", insertMap.get(field), readResultMap.get(field));
+            assertEquals("Assert " + field + " was read correctly", insertMap.get(field).toString(), readResultMap.get(field).toString());
         }
 
         readResultMap = new HashMap<String, ByteIterator>();
@@ -267,9 +265,7 @@ public class JdbcDBClientTest {
         jdbcDBClient.read(TABLE_NAME, insertKey, readFields, readResultMap);
         assertEquals("Assert that result has correct number of fields", readFields.size(), readResultMap.size());
         for (String field: readFields) {
-            // TODO: This will fail until the fix is made to insert and update fields in the correct order.
-            // TODO: Uncomment this assertEquals when the fix is made.
-            //assertEquals("Assert " + field + " was read correctly", insertMap.get(field), readResultMap.get(field));
+            assertEquals("Assert " + field + " was read correctly", insertMap.get(field).toString(), readResultMap.get(field).toString());
         }
     }
 
@@ -325,11 +321,71 @@ public class JdbcDBClientTest {
         for (HashMap<String, ByteIterator> result: resultVector) {
             assertEquals("Assert that this row has the correct number of fields", fieldSet.size(), result.size());
             for (String field: fieldSet) {
-                // TODO: This will fail until the fix is made to insert and update fields in the correct order.
-                // TODO: Uncomment this assertEquals when the fix is made.
-                //assertEquals("Assert this field is correct in this row", keyMap.get(KEY_PREFIX + testIndex).get(field), result.get(field));
+                assertEquals("Assert this field is correct in this row", keyMap.get(KEY_PREFIX + testIndex).get(field).toString(), result.get(field).toString());
             }
             testIndex++;
         }
+    }
+
+    @Test
+    public void insertBatchTest() throws DBException {
+      insertBatchTest(20);
+    }
+
+    @Test
+    public void insertPartialBatchTest() throws DBException {
+      insertBatchTest(19);
+    }
+
+    public void insertBatchTest(int numRows) throws DBException {
+      teardown();
+      setupWithBatch(10, false);
+      try {
+        String insertKey = "user0";
+        HashMap<String, ByteIterator> insertMap = insertRow(insertKey);
+        assertEquals(3, insertMap.size());
+
+        ResultSet resultSet = jdbcConnection.prepareStatement(
+          String.format("SELECT * FROM %s", TABLE_NAME)
+            ).executeQuery();
+
+        // Check we do not have a result Row (because batch is not full yet)
+        assertFalse(resultSet.next());
+        // insert more rows, completing 1 batch (still results are partial).
+        for (int i = 1; i < numRows; i++) {
+          insertMap = insertRow("user" + i);
+        }
+
+        //
+        assertNumRows(10 * (numRows / 10));
+
+        // call cleanup, which should insert the partial batch
+        jdbcDBClient.cleanup();
+        // Prevent a teardown() from printing an error
+        jdbcDBClient = null;
+
+        // Check that we have all rows
+        assertNumRows(numRows);
+
+      } catch (SQLException e) {
+        e.printStackTrace();
+        fail("Failed insertBatchTest");
+      } finally {
+        teardown(); // for next tests
+        setup();
+      }
+    }
+
+    private void assertNumRows(long numRows) throws SQLException {
+      ResultSet resultSet = jdbcConnection.prepareStatement(
+        String.format("SELECT * FROM %s", TABLE_NAME)
+          ).executeQuery();
+
+      for (int i = 0; i < numRows; i++) {
+        assertTrue("expecting " + numRows + " results, received only " + i, resultSet.next());
+      }
+      assertFalse("expecting " + numRows + " results, received more", resultSet.next());
+
+      resultSet.close();
     }
 }
