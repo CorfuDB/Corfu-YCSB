@@ -28,7 +28,8 @@ import java.util.Vector;
  *
  */
 public class CorfuClient extends DB {
-  private CorfuRuntime runtime;
+  private static CorfuRuntime runtime;
+  private static Boolean runtimeInited = false;
   private Map<String, Map<String, String>> localCache;
 
   /**
@@ -40,10 +41,14 @@ public class CorfuClient extends DB {
     super.init();
     Logger root = (Logger) LoggerFactory.getLogger(Logger.ROOT_LOGGER_NAME);
     root.setLevel(Level.OFF);
-    runtime = new CorfuRuntime()
-        // Get config string as argument
-        .parseConfigurationString("localhost:9000")
-        .connect();
+    if (!runtimeInited) {
+      runtime = new CorfuRuntime()
+          // Get config string as argument
+          .parseConfigurationString("localhost:9000")
+          .connect();
+      runtimeInited = true;
+    }
+
 
     /* Create default: usertable table */
     localCache = CorfuUtils.<String, Map<String, String>>createSMRMap("usertable", runtime);
