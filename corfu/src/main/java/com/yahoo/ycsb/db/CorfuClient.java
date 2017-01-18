@@ -39,12 +39,13 @@ public class CorfuClient extends DB {
   @Override
   public void init() throws DBException {
     super.init();
+    String connectString = getProperties().getProperty("connect_string", "localhost:9000");
     Logger root = (Logger) LoggerFactory.getLogger(Logger.ROOT_LOGGER_NAME);
     root.setLevel(Level.OFF);
     if (!runtimeInited) {
       runtime = new CorfuRuntime()
           // Get config string as argument
-          .parseConfigurationString("localhost:9000")
+          .parseConfigurationString(connectString)
           .connect();
       runtimeInited = true;
     }
