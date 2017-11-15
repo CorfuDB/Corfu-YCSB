@@ -18,15 +18,11 @@
   <dependencies>
     <dependency>
       <groupId>org.corfudb</groupId>
-      <artifactId>corfu</artifactId>
-      <version>0.1-SNAPSHOT</version>
-      <type>pom</type>
-    </dependency>
-    <dependency>
-      <groupId>org.corfudb</groupId>
       <artifactId>runtime</artifactId>
       <version>0.1-SNAPSHOT</version>
+      <scope>compile</scope>
     </dependency>
+
     <dependency>
       <groupId>com.yahoo.ycsb</groupId>
       <artifactId>core</artifactId>
@@ -34,6 +30,7 @@
       <scope>provided</scope>
     </dependency>
   </dependencies>
+
   <build>
     <plugins>
       <plugin>
@@ -58,4 +55,15 @@
       </plugin>
     </plugins>
   </build>
+
+  <repositories>
+    <repository>
+      <id>corfu-mvn-repo</id>
+      <url>https://raw.github.com/CorfuDB/Corfu-Repos/mvn-repo/</url>
+      <snapshots>
+        <enabled>true</enabled>
+        <updatePolicy>always</updatePolicy>
+      </snapshots>
+    </repository>
+  </repositories>
 </project>
